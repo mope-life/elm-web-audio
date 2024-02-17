@@ -16,24 +16,24 @@
 //   algorithm; we'll filter the list of previous keys for ones not present in
 //   the current graph, then we'll filter the current keys for ones not present
 //   in the previous graph even though we can already work that out from what
-//   we already know.  
+//   we already know.
 //
 // - We only support a subset of the Web Audio API. Specifically, we don't support
-//   buffer sources so playing audio files is out of the question. That kind of 
+//   buffer sources so playing audio files is out of the question. That kind of
 //   sucks and I expect it will be dealbreaker for those seriously considering
 //   adopting this library for their own code.
 //
 // - We also don't support custom or external audio nodes like those provided
 //   by tone.js or tuna. This isn't particularly horrible to implement, fortunately
-//   they will all abide by the same basic AudioNode api, so allowing developers 
+//   they will all abide by the same basic AudioNode api, so allowing developers
 //   to extend the VirtualAudioContext with knowledge of these nodes would be
 //   really nice.
 //
-// - How to handle things like visualsation is a bit of a mystery to me. 
+// - How to handle things like visualsation is a bit of a mystery to me.
 //
 // - Similarly, handling of scheduled param updates is a bit naff. It's just about
 //   servicable but the api provided by Web Audio is also a bit naff so maybe
-//   we just have to live with that. 
+//   we just have to live with that.
 //
 
 // NODES -----------------------------------------------------------------------
@@ -139,19 +139,7 @@ export class VirtualAudioContext extends AudioContext {
 
                 case 'ScheduledUpdate': {
                     const { key, label, value } = created
-                    const { method, target, time } = created.value
-                    this.nodes[created.key][created.label][method](target, time)
-                    if (label in node) {
-                        this.nodes[key][label][value.method](value.target, value.time)
-                    } else {
-                        // Like the 'AudioParam' case we'll fall back to just
-                        // assigning the property on the node, but we'll do so
-                        // (roughly) after the provided delay.
-                        window.setTimeout(
-                            () => node[label] = value.target,
-                            value.time - this.currentTime
-                        )
-                    }
+                    this.applyScheduledUpdate(this.nodes[key][label], value)
                     return
                 }
 
@@ -252,18 +240,7 @@ export class VirtualAudioContext extends AudioContext {
                 }
 
                 case 'ScheduledUpdate': {
-                    if (label in node) {
-                        node[label][value.method](value.target, value.time)
-                    } else {
-                        // Like the 'AudioParam' case we'll fall back to just
-                        // assigning the property on the node, but we'll do so
-                        // (roughly) after the provided delay.
-                        window.setTimeout(
-                            () => node[label] = value.target,
-                            value.time - this.currentTime
-                        )
-                    }
-
+                    this.applyScheduledUpdate(node[label], value)
                     break
                 }
             }
@@ -283,6 +260,12 @@ export class VirtualAudioContext extends AudioContext {
         }
 
         return this.nodes[key] = node
+    }
+
+    applyScheduledUpdate(param, { method, target, time }) {
+        if (param instanceof AudioParam) {
+            param[method](target, time)
+        }
     }
 
     connect(from = '', to = '') {
@@ -405,7 +388,7 @@ function diff(prev = {}, curr = {}) {
 }
 
 // This helper functions assumes the `type` of both nodes *is the same*. Bad
-// things will happen if you try and diff a `gain` node with an `oscillator` 
+// things will happen if you try and diff a `gain` node with an `oscillator`
 // and expect the patch to make sense.
 function diffNode(prev, curr) {
     const patch = {
@@ -462,7 +445,7 @@ function diffNode(prev, curr) {
         }
 
         // The audio param exists on the previous node, but not the current one,
-        // *and* there are no scheduled updates that affect this param. 
+        // *and* there are no scheduled updates that affect this param.
         else if (!curr.properties.some(prop => prop.type === 'ScheduledUpdate' && prop.label)) {
             patch.deleted.push(prevAudioParams[label])
         }
@@ -481,7 +464,7 @@ function diffNode(prev, curr) {
     // in general.
     //
     // For now we'll just keep on scheduling new updates and ignore ones that
-    // were previously scheduled. 
+    // were previously scheduled.
     curr.properties.filter(({ type }) => type === 'ScheduledUpdate').forEach(update => {
         const existsOnPrev = prev.properties.some(({ type, label, value }) =>
             // JavaScript doesn't have structural equality, so there's not
@@ -512,4 +495,4 @@ function diffNode(prev, curr) {
     })
 
     return patch
-} 
+}
