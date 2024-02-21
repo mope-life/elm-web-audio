@@ -110,15 +110,13 @@ export class VirtualAudioContext extends AudioContext {
                 }
 
                 case 'AudioParam': {
-                    // An AudioParam will only be in a deleted patch if both the
-                    // param and all of it's scheduled updates have been removed.
-                    // In that case we'll want to cancel any updates that might've
-                    // been scheduled up until now.
-                    this.nodes[deleted.key][deleted.label].cancelScheduledValues(this.currentTime)
                     // AudioParams have an associated `defaultValue` property
                     // that we can revert to – we don't want to *actually* delete
                     // the param.
-                    this.nodes[deleted.key][deleted.label].value = this.nodes[deleted.key][deleted.label].defaultValue
+                    const param = this.nodes[deleted.key][deleted.label]
+                    if (param instanceof AudioParam) {
+                        param.value = param.defaultValue
+                    }
                     return
                 }
 
@@ -403,11 +401,7 @@ function diffNode(prev, curr) {
 
         // The property exists on the previous node, but not the current one.
         // That's a delete!
-        // For AudioParams, we also make sure that there are no scheduled updates
-        // that affect this param before we delete it.
-        else if (prevNodeProperties[label].type !== 'AudioParam'
-            || !curr.properties.some(prop => prop.type === 'ScheduledUpdate' && prop.label))
-        {
+        else {
             patch.deleted.push(prevNodeProperties[label])
         }
     })
