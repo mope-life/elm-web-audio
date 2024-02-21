@@ -93,7 +93,12 @@ export class VirtualAudioContext extends AudioContext {
     update(graph = []) {
         const nodes = graph.reduce(flatten(), {})
         const patch = diff(this.prev, nodes)
+        this.applyPatch(patch)
+        this.prev = nodes
+        return this.nodes
+    }
 
+    applyPatch(patch) {
         patch.deleted.forEach(deleted => {
             switch (deleted.type) {
                 case 'Connection':
@@ -105,15 +110,13 @@ export class VirtualAudioContext extends AudioContext {
                 }
 
                 case 'AudioParam': {
-                    // An AudioParam will only be in a deleted patch if both the
-                    // param and all of it's scheduled updates have been removed.
-                    // In that case we'll want to cancel any updates that might've
-                    // been scheduled up until now.
-                    this.nodes[deleted.key][deleted.label].cancelScheduledValues(this.currentTime)
                     // AudioParams have an associated `defaultValue` property
                     // that we can revert to – we don't want to *actually* delete
                     // the param.
-                    this.nodes[deleted.key][deleted.label].value = this.nodes[deleted.key][deleted.label].defaultValue
+                    const param = this.nodes[deleted.key][deleted.label]
+                    if (param instanceof AudioParam) {
+                        param.value = param.defaultValue
+                    }
                     return
                 }
 
@@ -127,33 +130,56 @@ export class VirtualAudioContext extends AudioContext {
                 case 'Connection':
                     return this.connect(created.from, created.to)
 
+                // NodeProperties are just regular object properties, so we can
+                // just assign them on the node whether they currently exist
+                // or not.
                 case 'NodeProperty': {
                     this.nodes[created.key][created.label] = created.value
                     return
                 }
 
+                // AudioParams are a bit special. Each audio node has a specific
+                // set of AudioParams associated with it (e.g. GainNode has gain,
+                // but not frequency) so we need to check if the label exists on
+                // the node before we start fiddling with it.
                 case 'AudioParam': {
-                    this.nodes[created.key][created.label].value = created.value
+                    const { key, label, value } = created
+                    const param = this.nodes[key][label]
+                    if (param instanceof AudioParam) {
+                        param.value = value
+                    }
                     return
                 }
 
                 case 'ScheduledUpdate': {
                     const { key, label, value } = created
-                    this.applyScheduledUpdate(this.nodes[key][label], value)
+                    const { method, target, time } = value
+                    const param = this.nodes[key][label]
+                    if (param instanceof AudioParam) {
+                        param[method](target, time)
+                    }
                     return
                 }
 
-                default:
-                    return this.createNode(created.key, created.type, created.properties, created.connections)
+                // If it isn't anything else, it must be a new node
+                default: {
+                    const newNode = this.createNode(created)
 
+                    // Save our new actual real audio node.
+                    this.nodes[created.key] = newNode
+
+                    // Create a dummy "previous" node and diff so that we can
+                    // get a patch for the new one
+                    const nodePatch = diffNode(node(created.type, [], []), created)
+                    nodePatch.created.forEach(c => c.key = created.key)
+                    this.applyPatch(nodePatch)
+                    return
+                }
             }
         })
-
-        this.prev = nodes
-        return this.nodes
     }
 
-    createNode(key, type, properties, connections) {
+    createNode({ type, properties }) {
         const node = (() => {
             switch (type) {
                 case 'AudioDestinationNode':
@@ -214,42 +240,6 @@ export class VirtualAudioContext extends AudioContext {
             }
         })()
 
-        for (const { type, label, value } of properties) {
-            switch (type) {
-                // NodeProperties are just regular object properties, so we can
-                // just assign them on the node whether they currently exist
-                // or not.
-                case 'NodeProperty':
-                    node[label] = value
-                    break
-
-                // AudioParams (and ScheduledUpdates, which are also just AudioParams)
-                // are a bit special. Each audio node has a specific set of
-                // AudioParams associated with it (e.g. GainNode has gain, but
-                // not frequency) so we need to check if the label exists on the
-                // node before we start fiddling with it.
-                case 'AudioParam': {
-                    if (label in node) {
-                        node[label].value = value
-                    } else {
-                        // Fallback to just assigning the property on the node.
-                        node[label] = value
-                    }
-
-                    break
-                }
-
-                case 'ScheduledUpdate': {
-                    this.applyScheduledUpdate(node[label], value)
-                    break
-                }
-            }
-        }
-
-        for (const to of connections) {
-            this.connect(key, to)
-        }
-
         // Certain nodes, like oscillators, must be explicitly started at a given
         // time before they'll start processing samples. Because our graph is
         // a declarative representation of audio state, if we're trying to create
@@ -259,13 +249,7 @@ export class VirtualAudioContext extends AudioContext {
             node.start(this.currentTime)
         }
 
-        return this.nodes[key] = node
-    }
-
-    applyScheduledUpdate(param, { method, target, time }) {
-        if (param instanceof AudioParam) {
-            param[method](target, time)
-        }
+        return node;
     }
 
     connect(from = '', to = '') {
@@ -396,8 +380,13 @@ function diffNode(prev, curr) {
         deleted: []
     }
 
-    const prevNodeProperties = prev.properties.filter(({ type }) => type === 'NodeProperty').reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
-    const currNodeProperties = curr.properties.filter(({ type }) => type === 'NodeProperty').reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
+    const prevNodeProperties = prev.properties
+        .filter(({ type }) => type === 'NodeProperty' || type === 'AudioParam')
+        .reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
+
+    const currNodeProperties = curr.properties
+        .filter(({ type }) => type === 'NodeProperty' || type === 'AudioParam')
+        .reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
 
     Object.keys(prevNodeProperties).forEach(label => {
         // The property exists on both nodes, and the value has changed. That's
@@ -422,40 +411,6 @@ function diffNode(prev, curr) {
         // That's a create!
         if (!(label in prevNodeProperties)) {
             patch.created.push(currNodeProperties[label])
-        }
-    })
-
-    const prevAudioParams = prev.properties
-        .filter(({ type }) => type === 'AudioParam')
-        .reduce((params, param) => ({ ...params, [param.label]: param }), {})
-
-    const currAudioParams = curr.properties
-        .filter(({ type }) => type === 'AudioParam')
-        .reduce((params, param) => ({ ...params, [param.label]: param }), {})
-
-    Object.keys(prevAudioParams).forEach(label => {
-        // The audio param exists on both nodes, and the value has changed. That's
-        // an update!
-        if (label in currAudioParams) {
-            if (prevAudioParams[label].value !== currAudioParams[label].value) {
-                // We don't actually need to keep track of an `updated` property
-                // on the patch. We can just use `created` and `deleted`.
-                patch.created.push(currAudioParams[label])
-            }
-        }
-
-        // The audio param exists on the previous node, but not the current one,
-        // *and* there are no scheduled updates that affect this param.
-        else if (!curr.properties.some(prop => prop.type === 'ScheduledUpdate' && prop.label)) {
-            patch.deleted.push(prevAudioParams[label])
-        }
-    })
-
-    Object.keys(currAudioParams).forEach(label => {
-        // The audio param exists on the current node, but not the previous one.
-        // That's a create!
-        if (!(label in prevAudioParams)) {
-            patch.created.push(currAudioParams[label])
         }
     })
 
