@@ -382,8 +382,13 @@ function diffNode(prev, curr) {
         deleted: []
     }
 
-    const prevNodeProperties = prev.properties.filter(({ type }) => type === 'NodeProperty').reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
-    const currNodeProperties = curr.properties.filter(({ type }) => type === 'NodeProperty').reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
+    const prevNodeProperties = prev.properties
+        .filter(({ type }) => type === 'NodeProperty' || type === 'AudioParam')
+        .reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
+
+    const currNodeProperties = curr.properties
+        .filter(({ type }) => type === 'NodeProperty' || type === 'AudioParam')
+        .reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
 
     Object.keys(prevNodeProperties).forEach(label => {
         // The property exists on both nodes, and the value has changed. That's
@@ -398,7 +403,11 @@ function diffNode(prev, curr) {
 
         // The property exists on the previous node, but not the current one.
         // That's a delete!
-        else {
+        // For AudioParams, we also make sure that there are no scheduled updates
+        // that affect this param before we delete it.
+        else if (prevNodeProperties[label].type !== 'AudioParam'
+            || !curr.properties.some(prop => prop.type === 'ScheduledUpdate' && prop.label))
+        {
             patch.deleted.push(prevNodeProperties[label])
         }
     })
@@ -408,40 +417,6 @@ function diffNode(prev, curr) {
         // That's a create!
         if (!(label in prevNodeProperties)) {
             patch.created.push(currNodeProperties[label])
-        }
-    })
-
-    const prevAudioParams = prev.properties
-        .filter(({ type }) => type === 'AudioParam')
-        .reduce((params, param) => ({ ...params, [param.label]: param }), {})
-
-    const currAudioParams = curr.properties
-        .filter(({ type }) => type === 'AudioParam')
-        .reduce((params, param) => ({ ...params, [param.label]: param }), {})
-
-    Object.keys(prevAudioParams).forEach(label => {
-        // The audio param exists on both nodes, and the value has changed. That's
-        // an update!
-        if (label in currAudioParams) {
-            if (prevAudioParams[label].value !== currAudioParams[label].value) {
-                // We don't actually need to keep track of an `updated` property
-                // on the patch. We can just use `created` and `deleted`.
-                patch.created.push(currAudioParams[label])
-            }
-        }
-
-        // The audio param exists on the previous node, but not the current one,
-        // *and* there are no scheduled updates that affect this param.
-        else if (!curr.properties.some(prop => prop.type === 'ScheduledUpdate' && prop.label)) {
-            patch.deleted.push(prevAudioParams[label])
-        }
-    })
-
-    Object.keys(currAudioParams).forEach(label => {
-        // The audio param exists on the current node, but not the previous one.
-        // That's a create!
-        if (!(label in prevAudioParams)) {
-            patch.created.push(currAudioParams[label])
         }
     })
 
