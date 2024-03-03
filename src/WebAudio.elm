@@ -260,7 +260,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/ConstantSourceNode>
 -}
 constantSource : List Property -> List Node -> Node
 constantSource =
-    Node "ConstantSource"
+    Node "ConstantSourceNode"
 
 
 {-| Common properties:
