@@ -261,9 +261,20 @@ export class VirtualAudioContext extends AudioContext {
 
     connect({ from, to, param }) {
         window.setTimeout(() => {
-            if (from in this.nodes && to in this.nodes) {
-                const target = param ? this.nodes[to][param] : this.nodes[to]
-                this.nodes[from].connect(target)
+            if (from in this.nodes) {
+                let target = this.nodes[to]
+                if (param && target) {
+                    target = target[param]
+                }
+
+                if (target) {
+                    this.nodes[from].connect(target)
+                }
+                else {
+                    const msg = "Trying to connect to a non-existant node: " + to
+                        + (param ? ", param: " + param : "")
+                    console.warn(msg)
+                }
             }
         }, 0)
     }
