@@ -49,6 +49,7 @@ module WebAudio exposing
 -- Imports ---------------------------------------------------------------------
 
 import Json.Encode
+import WebAudio.Internal as Internal
 import WebAudio.Property exposing (Property)
 
 
@@ -56,10 +57,12 @@ import WebAudio.Property exposing (Property)
 -- Types -----------------------------------------------------------------------
 
 
-{-| Represents a node in an audio processing singal graph. There are a handful
+{-| Represents a node in an audio processing signal graph. There are a handful
 of basic constructors: [`node`](#node) for creating typical audio nodes,
 [`keyed`](#keyed) for attaching a key or id to an existing node, and [`ref`](#ref)
-for referencing a node elsewhere in the graph by id.
+for referencing a node elsewhere in the graph by id. Additionally, certain
+parameters of an audio node (AudioParams) can be nodes themselves, as
+represented by [`param`](#param).
 
 There are also a number of constructors for specific audio nodes, such as
 [`oscillator`](#oscillator) and [`gain`](#gain). These constructors mirror the
@@ -78,11 +81,7 @@ low-level nodes provided by the Web Audio API: they make great building blocks!
             ]
 
 -}
-type Node
-    = Node String (List Property) (List Node)
-    | Keyed String String (List Property) (List Node)
-    | Ref String
-
+type alias Node = Internal.Node
 
 
 -- Node constructors -----------------------------------------------------------
@@ -110,8 +109,7 @@ to use those nodes in Elm.
 
 -}
 node : String -> List Property -> List Node -> Node
-node =
-    Node
+node = Internal.node
 
 
 {-| A ref node is used to refer to some other audio node by id. We can do things
@@ -146,8 +144,7 @@ like create a feedback loop by connecting a node back into itself.
 
 -}
 ref : String -> Node
-ref =
-    Ref
+ref = Internal.ref
 
 
 {-| Attach a key or id to an existing node. This is commonly used in conjunction
@@ -155,16 +152,7 @@ with [`ref`](#ref) nodes to create feedback loops and other more complex signal
 graphs.
 -}
 keyed : String -> Node -> Node
-keyed k n =
-    case n of
-        Node t ps cs ->
-            Keyed k t ps cs
-
-        Keyed _ t ps cs ->
-            Keyed k t ps cs
-
-        Ref _ ->
-            Ref k
+keyed = Internal.keyed
 
 
 {-| Typically we chain audio nodes together either implicitly by nesting them or
@@ -176,13 +164,14 @@ modulating parameters like cutoff frequencer of a filter using an oscillator.
 
     import WebAudio
     import WebAudio.Property
+    import WebAudio.Param
 
     audio : List WebAudio.Node
     audio =
         [ WebAudio.oscillator
             [ WebAudio.Property.frequency 5 ]
             -- Connect to the "frequency" parameter of the "carrier" node
-            [ WebAudio.param "carrier" "frequency" ]
+            [ WebAudio.Param.frequency "carrier" ]
         , WebAudio.keyed "carrier" <|
             WebAudio.oscillator []
                 [ WebAudio.dac ]
@@ -190,9 +179,7 @@ modulating parameters like cutoff frequencer of a filter using an oscillator.
 
 -}
 param : String -> String -> Node
-param k p =
-    ref (k ++ "." ++ p)
-
+param = Internal.param
 
 
 -- Audio nodes -----------------------------------------------------------------
@@ -219,7 +206,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/AudioDestinationNode>
 -}
 audioDestination : Node
 audioDestination =
-    Node "AudioDestinationNode" [] []
+    node "AudioDestinationNode" [] []
 
 
 {-| Common properties:
@@ -234,21 +221,21 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/BiquadFilterNode>
 -}
 biquadFilter : List Property -> List Node -> Node
 biquadFilter =
-    Node "BiquadFilterNode"
+    node "BiquadFilterNode"
 
 
 {-| See: <https://developer.mozilla.org/en-US/docs/Web/API/ChannelMergerNode>
 -}
 channelMerger : List Property -> List Node -> Node
 channelMerger =
-    Node "ChannelMergerNode"
+    node "ChannelMergerNode"
 
 
 {-| See: <https://developer.mozilla.org/en-US/docs/Web/API/ChanneSplliterNode>
 -}
 channelSplitter : List Property -> List Node -> Node
 channelSplitter =
-    Node "ChannelSplitterNode"
+    node "ChannelSplitterNode"
 
 
 {-| Common properties:
@@ -260,7 +247,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/ConstantSourceNode>
 -}
 constantSource : List Property -> List Node -> Node
 constantSource =
-    Node "ConstantSourceNode"
+    node "ConstantSourceNode"
 
 
 {-| Common properties:
@@ -273,7 +260,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/ConvolverNode>
 -}
 convolver : List Property -> List Node -> Node
 convolver =
-    Node "ConvolverNode"
+    node "ConvolverNode"
 
 
 {-| An alias for `audioDestination`. "dac" is another common name for an output:
@@ -293,7 +280,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/DelayNode>
 -}
 delay : List Property -> List Node -> Node
 delay =
-    Node "DelayNode"
+    node "DelayNode"
 
 
 {-| Common properties:
@@ -310,7 +297,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/DynamicsCompressorNode>
 -}
 dynamicsCompressor : List Property -> List Node -> Node
 dynamicsCompressor =
-    Node "DynamicsCompressorNode"
+    node "DynamicsCompressorNode"
 
 
 {-| Common properties:
@@ -322,14 +309,14 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/GainNode>
 -}
 gain : List Property -> List Node -> Node
 gain =
-    Node "GainNode"
+    node "GainNode"
 
 
 {-| See: <https://developer.mozilla.org/en-US/docs/Web/API/>
 -}
 iirFilter : List Property -> List Node -> Node
 iirFilter =
-    Node "IIRFilterNode"
+    node "IIRFilterNode"
 
 
 {-| Common properties:
@@ -343,7 +330,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/OscillatorNode>
 -}
 oscillator : List Property -> List Node -> Node
 oscillator =
-    Node "OscillatorNode"
+    node "OscillatorNode"
 
 
 {-| An alias for [`oscillator`](#oscillator).
@@ -380,7 +367,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/PannerNode>
 -}
 panner : List Property -> List Node -> Node
 panner =
-    Node "PannerNode"
+    node "PannerNode"
 
 
 {-| Common properties:
@@ -392,7 +379,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/StereoPannerNode>
 -}
 stereoPanner : List Property -> List Node -> Node
 stereoPanner =
-    Node "StereoPannerNode"
+    node "StereoPannerNode"
 
 
 {-| Common properties:
@@ -405,7 +392,7 @@ See: <https://developer.mozilla.org/en-US/docs/Web/API/WaveShaperNode>
 -}
 waveShaper : List Property -> List Node -> Node
 waveShaper =
-    Node "WaveShaperNode"
+    node "WaveShaperNode"
 
 
 
@@ -420,25 +407,4 @@ it to a server, store it in LocalStorage, or other fun things.
 
 -}
 encode : Node -> Json.Encode.Value
-encode n =
-    case n of
-        Node t ps cs ->
-            Json.Encode.object
-                [ ( "type", Json.Encode.string t )
-                , ( "properties", Json.Encode.list WebAudio.Property.encode ps )
-                , ( "connections", Json.Encode.list encode cs )
-                ]
-
-        Keyed k t ps cs ->
-            Json.Encode.object
-                [ ( "key", Json.Encode.string k )
-                , ( "type", Json.Encode.string t )
-                , ( "properties", Json.Encode.list WebAudio.Property.encode ps )
-                , ( "connections", Json.Encode.list encode cs )
-                ]
-
-        Ref k ->
-            Json.Encode.object
-                [ ( "key", Json.Encode.string k )
-                , ( "type", Json.Encode.string "RefNode" )
-                ]
+encode = Internal.encode

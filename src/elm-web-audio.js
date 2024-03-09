@@ -50,14 +50,14 @@ export function ref(key) {
     return { key, type: 'RefNode' }
 }
 
+export function param(key, label) {
+    return { label, key, type: 'AudioParam' }
+}
+
 // PROPERTIES ------------------------------------------------------------------
 
 export function property(label, value) {
     return { type: 'NodeProperty', label, value }
-}
-
-export function param(label, value) {
-    return { type: 'AudioParam', label, value }
 }
 
 export function scheduledUpdate(label, method, target, time) {
@@ -74,6 +74,12 @@ export function linearRampToValueAtTime(time, label, value) {
 
 export function exponentialRampToValueAtTime(time, label, value) {
     return scheduledUpdate(label, 'exponentialRampToValueAtTime', value, time)
+}
+
+// CONNECTIONS -----------------------------------------------------------------
+
+export function connection(from, to, param = '') {
+    return { from, to, param }
 }
 
 // AUDIO CONTEXT ---------------------------------------------------------------
@@ -102,14 +108,15 @@ export class VirtualAudioContext extends AudioContext {
         patch.deleted.forEach(deleted => {
             switch (deleted.type) {
                 case 'Connection':
-                    return this.disconnect(deleted.from, deleted.to)
+                    this.disconnect(deleted.connection)
+                    return
 
                 case 'NodeProperty': {
                     delete this.nodes[deleted.key][deleted.label]
                     return
                 }
 
-                case 'AudioParam': {
+                case 'FixedParam': {
                     // AudioParams have an associated `defaultValue` property
                     // that we can revert to – we don't want to *actually* delete
                     // the param.
@@ -117,36 +124,36 @@ export class VirtualAudioContext extends AudioContext {
                     if (param instanceof AudioParam) {
                         param.value = param.defaultValue
                     }
-                    return
                 }
 
                 default:
-                    return this.deleteNode(deleted.key)
+                    this.deleteNode(deleted.key)
+                    return
             }
         })
 
         patch.created.forEach(created => {
             switch (created.type) {
                 case 'Connection':
-                    return this.connect(created.from, created.to)
+                    this.connect(created.connection)
+                    return
 
                 // NodeProperties are just regular object properties, so we can
                 // just assign them on the node whether they currently exist
                 // or not.
                 case 'NodeProperty': {
-                    this.nodes[created.key][created.label] = created.value
+                    const { key, label, value } = created
+                    this.nodes[key][label] = value
                     return
                 }
 
-                // AudioParams are a bit special. Each audio node has a specific
-                // set of AudioParams associated with it (e.g. GainNode has gain,
-                // but not frequency) so we need to check if the label exists on
-                // the node before we start fiddling with it.
-                case 'AudioParam': {
+                // Since an audio param is itself an object, we actually have to
+                // set the `value` property on the param, so we need to make
+                // sure that the param actually exists first.
+                case 'FixedParam': {
                     const { key, label, value } = created
-                    const param = this.nodes[key][label]
-                    if (param instanceof AudioParam) {
-                        param.value = value
+                    if (label in this.nodes[key] && typeof(this.nodes[key][label]) === 'object') {
+                        this.nodes[key][label].value = value
                     }
                     return
                 }
@@ -249,19 +256,14 @@ export class VirtualAudioContext extends AudioContext {
             node.start(this.currentTime)
         }
 
-        return node;
+        return node
     }
 
-    connect(from = '', to = '') {
-        const [toNode, toParam] = to.split('.')
-
+    connect({ from, to, param }) {
         window.setTimeout(() => {
-            if (from in this.nodes && toNode in this.nodes) {
-                if (toParam && toParam in this.nodes) {
-                    this.nodes[from].connect(this.nodes[toNode][toParam])
-                } else {
-                    this.nodes[from].connect(this.nodes[toNode], 0, 0)
-                }
+            if (from in this.nodes && to in this.nodes) {
+                const target = param ? this.nodes[to][param] : this.nodes[to]
+                this.nodes[from].connect(target)
             }
         }, 0)
     }
@@ -273,30 +275,26 @@ export class VirtualAudioContext extends AudioContext {
         }
     }
 
-    disconnect(from = '', to = null) {
+    disconnect({ from, to, param }) {
         // Guard to make sure we don't try to disconnect a node that doesn't
         // even exist.
         if (from in this.nodes) {
             // `to` is optional, if it isn't provided we'll disconnect the node
             // from all of its connections instead of a single specific one.
             if (to) {
-                const [toNode, toParam] = to.split('.')
-
                 // Guard to make sure we don't try to disconnect from a node that
                 // doesn't even exist.
-                if (toNode in this.nodes) {
-                    // Connections can look like `foo.frequency` or just `foo`.
-                    // The former is a notation that allows us to connect to
-                    // specific audio params, so we need to check if a) we have
-                    // a param connection, and b) that param actually exists on
-                    // the target node.
-                    if (toParam && toParam in this.nodes[toNode]) {
-                        this.nodes[from].disconnect(this.nodes[toNode][toParam])
-                    } else {
-                        this.nodes[from].disconnect(this.nodes[toNode])
+                if (to in this.nodes) {
+                    // Connections can be to an AudioParam or an AudioNode. We
+                    // know that this connection is to an AudioParam if the name
+                    // of the param was not blank in this connection.
+                    const target = param ? this.nodes[to][param] : this.nodes[to]
+                    if (target) {
+                        this.nodes[from].disconnect(target);
                     }
                 }
-            } else {
+            }
+            else {
                 this.nodes[from].disconnect()
             }
         }
@@ -314,12 +312,14 @@ export default VirtualAudioContext
 
 function flatten(base = '') {
     return (nodes, node, idx) => {
-        if (node.type === 'RefNode') {
+        if (node.type === 'RefNode' || node.type === 'AudioParam') {
             return nodes
         }
 
         const key = node.key || (base + idx)
-        const connections = node.connections.map((connection, i) => connection.key || (key + i))
+        const connections = node.connections.map((connection, i) => {
+            return { key: connection.key || (key + i), ...connection }
+        })
 
         return node.connections.reduce(flatten(key), { ...nodes, [key]: { ...node, key, connections } })
     }
@@ -381,11 +381,11 @@ function diffNode(prev, curr) {
     }
 
     const prevNodeProperties = prev.properties
-        .filter(({ type }) => type === 'NodeProperty' || type === 'AudioParam')
+        .filter(({ type }) => type === 'NodeProperty' || type === 'FixedParam')
         .reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
 
     const currNodeProperties = curr.properties
-        .filter(({ type }) => type === 'NodeProperty' || type === 'AudioParam')
+        .filter(({ type }) => type === 'NodeProperty' || type === 'FixedParam')
         .reduce((props, prop) => ({ ...props, [prop.label]: prop }), {})
 
     Object.keys(prevNodeProperties).forEach(label => {
@@ -437,15 +437,15 @@ function diffNode(prev, curr) {
         }
     })
 
-    curr.connections.forEach(key => {
-        if (!prev.connections.includes(key)) {
-            patch.created.push(({ type: 'Connection', from: curr.key, to: key }))
+    curr.connections.forEach(c => {
+        if (!prev.connections.some(cp => cp.key === c.key && cp.label === c.label)) {
+            patch.created.push({ type: 'Connection', connection: connection(curr.key, c.key, c.label) })
         }
     })
 
-    prev.connections.forEach(key => {
-        if (!curr.connections.includes(key)) {
-            patch.deleted.push(({ type: 'Connection', from: curr.key, to: key }))
+    prev.connections.forEach(c => {
+        if (!curr.connections.some(cc => cc.key === c.key && cc.label === c.label)) {
+            patch.deleted.push({ type: 'Connection', connection: connection(curr.key, c.key, c.label) })
         }
     })
 

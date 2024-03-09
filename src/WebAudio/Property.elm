@@ -81,7 +81,10 @@ This example showcases the different types of properties you can construct:
 
   - [`audioParams`](#audioParam) like [`frequency`](#frequency) are special,
     and represent values that can be changed over time using the scheduled updates
-    described below. These are always `Float`s!
+    described below. These are always `Float`s! If we want the value to change
+    over time, we either connect it to the output of a node or use a scheduled
+    update. On the other hand, sometimes we wish to set the param to some fixed
+    value. In that case, use `audioParam`.
 
   - Scheduled updates like [`linearRampToValueAtTime`](#linearRampToValueAtTime).
     These describe how a property should change over time. These scheduled updates
@@ -90,7 +93,7 @@ This example showcases the different types of properties you can construct:
 -}
 type Property
     = NodeProperty String Value
-    | AudioParam String Value
+    | FixedParam String Value
     | ScheduledUpdate
         String
         { method : ScheduledUpdateMethod
@@ -156,7 +159,7 @@ have custom audio nodes with properties we might not know about.
 -}
 audioParam : String -> Float -> Property
 audioParam name val =
-    AudioParam name (float val)
+    FixedParam name (float val)
 
 
 {-| Schedule an update to a property to take place at some point in the future.
@@ -221,7 +224,7 @@ setValueAtTime time prop =
         NodeProperty _ _ ->
             prop
 
-        AudioParam label value ->
+        FixedParam label value ->
             ScheduledUpdate label
                 { method = SetValueAtTime
                 , target = value
@@ -250,7 +253,7 @@ linearRampToValueAtTime time prop =
                 , time = time
                 }
 
-        AudioParam label value ->
+        FixedParam label value ->
             ScheduledUpdate label
                 { method = LinearRampToValueAtTime
                 , target = value
@@ -283,7 +286,7 @@ exponentialRampToValueAtTime time prop =
                 , time = time
                 }
 
-        AudioParam label value ->
+        FixedParam label value ->
             ScheduledUpdate label
                 { method = ExponentialRampToValueAtTime
                 , target = value
@@ -603,9 +606,9 @@ encode prop =
                 , ( "value", value )
                 ]
 
-        AudioParam label (Value value) ->
+        FixedParam label (Value value) ->
             Json.Encode.object
-                [ ( "type", Json.Encode.string "AudioParam" )
+                [ ( "type", Json.Encode.string "FixedParam" )
                 , ( "label", Json.Encode.string label )
                 , ( "value", value )
                 ]
